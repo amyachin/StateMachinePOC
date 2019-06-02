@@ -7,9 +7,10 @@ namespace StateMachines
 {
     public interface IScheduleService
     {
-        // Get requests for a particular type
+        // Get requests for a particular type with non-termnal status
         Task<IList<RequestStatusRecord>> GetPendingRequests(RequestType type, int maxCount);
-        Task<ScheduleVisitRequest> GetScheduleVistRequest(long requestId);
-        Task ChangeStatus(RequestStatusRecord record, RequestStatus newStatus, string message);
+        Task ChangeStatus(RequestStatusRecord record, int newStatusId, string message);
+        Task<ScheduleVisitRequest> GetScheduleVisitRequest(long requestId);
+
     }
 }

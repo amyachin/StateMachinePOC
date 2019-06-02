@@ -1,5 +1,8 @@
-﻿using System;
+﻿using Microsoft.Extensions.Logging;
+using System;
 using System.Collections.Generic;
+using System.Linq;
+
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -8,161 +11,98 @@ using System.Threading.Tasks.Dataflow;
 namespace StateMachines
 {
 
-    class ScheduleVisitActor
+    public class ScheduleVisitActor : Actor<ScheduleVisitStatus>
     {
-        public ScheduleVisitActor(RequestStatusRecord statusRecord)
+        public ScheduleVisitActor(RequestStatusRecord statusRecord) : base(statusRecord)
         {
-            StatusRecord = statusRecord;
         }
-
-        public RequestStatusRecord StatusRecord { get; }
-
-        public RequestStatus Status { get { return StatusRecord.Status; } }
 
         public ScheduleVisitRequest Data { get; set; }
 
-
-        // TODO: Encrollment-specific data listed here
+        // TODO: Add enrollment-specific data 
     }
 
-    class ScheduleVisitTransition
+    public class ScheduleVisitStateMachine : StateMachine<ScheduleVisitActor, ScheduleVisitStatus>
     {
-        public ScheduleVisitTransition(ScheduleVisitActor source, Func<ScheduleVisitActor, Task<RequestStatus>> transition)
+        public ScheduleVisitStateMachine(ILoggerFactory loggerFactory, IScheduleService service) : base(loggerFactory, service, ScheduleVisitStatus.ScheduleVisitFailed)
         {
-            Source = source;
-            Transition = transition;
         }
 
-        public Task<RequestStatus> ExecuteAsync()
+
+        protected override async Task<IList<ScheduleVisitActor>> GetPendingMessagesFromQueue()
         {
-            return Transition(Source);
+            return (await ScheduleService.GetPendingRequests(RequestType.ScheduleVisit, 100))
+                .Select(it => new ScheduleVisitActor(it))
+                .ToList();
         }
 
-        public ScheduleVisitActor Source { get; }
-
-        private Func<ScheduleVisitActor, Task<RequestStatus>> Transition { get; }
-    }
-
-    class ScheduleVisitException: Exception
-    {
-        public ScheduleVisitException(string message, RequestStatus errorStatus, Exception innerException):base(message, innerException)
-        {
-            ErrorStatus = errorStatus;
-        }
-
-        public RequestStatus ErrorStatus { get; }
-    }
-
-    public class ScheduleVisitStateMachine 
-    {
-        public ScheduleVisitStateMachine(IScheduleService service)
-        {
-            _service = service;
-        }
-
-        public async Task ExecuteAsync(CancellationToken cancellationToken)
-        {
-            var batch = await _service.GetPendingRequests(RequestType.ScheduleVisit, 1000);
-            if (batch.Count == 0)
-            {
-                // Nothing to do
-                return;
-            }
-
-            _cancellationToken = cancellationToken;
-
-            _dispatcher = new ActionBlock<ScheduleVisitActor>(DispatchActor, new ExecutionDataflowBlockOptions { CancellationToken = cancellationToken });
-            _processor = new ActionBlock<ScheduleVisitTransition>(ProcessTransition, new ExecutionDataflowBlockOptions { CancellationToken = cancellationToken, MaxDegreeOfParallelism = DataflowBlockOptions.Unbounded });
-            _countdown = new Countdown(batch.Count);
-
-            try
-            {
-                foreach (var item in batch)
-                {
-                    ScheduleVisitActor actor = new ScheduleVisitActor(item);
-                    _dispatcher.Post(actor);
-                }
-
-                await _countdown.WaitAsync(cancellationToken);
-            }
-            finally
-            {
-                _countdown.Dispose();
-            }
-        }
-
-        void DispatchActor(ScheduleVisitActor actor)
+        protected override StateTransition GetNextTransition(ScheduleVisitActor actor)
         {
             switch (actor.Status)
             {
-                case RequestStatus.ConsumerEnrollmentPending:
-                case RequestStatus.ConsumerEnrollmentRunning:
-                    _processor.Post(new ScheduleVisitTransition(actor, EnrollConsumer));
-                    break;
+                case ScheduleVisitStatus.ConsumerEnrollmentPending:
+                case ScheduleVisitStatus.ConsumerEnrollmentRunning:
+                    return CreateTransition(actor, EnrollConsumer);
 
-                case RequestStatus.ScheduleVisitPending:
-                case RequestStatus.ScheduleVisitRunning:
-                    _processor.Post(new ScheduleVisitTransition(actor, ScheduleVisitForEnrolledConsumer));
-                    break;
+                case ScheduleVisitStatus.ScheduleVisitPending:
+                case ScheduleVisitStatus.ScheduleVisitRunning:
+                    return CreateTransition(actor, ScheduleVisitForEnrolledConsumer);
 
                 default:
-                    // a terminal status reached
-                    _countdown.Release();
-                    break;
+                    return null;
             }
         }
 
-
-        async Task<RequestStatus> EnrollConsumer(ScheduleVisitActor source)
+        async Task<ScheduleVisitStatus> EnrollConsumer(ScheduleVisitActor source)
         {
             try
             {
-                _cancellationToken.ThrowIfCancellationRequested();
+                CancellationToken.ThrowIfCancellationRequested();
 
                 if (source.Data == null)
                 {
-                    source.Data = await _service.GetScheduleVistRequest(source.StatusRecord.RequestId);
+                    source.Data = await ScheduleService.GetScheduleVisitRequest(source.StatusRecord.RequestId);
                 }
 
-                if (source.Status == RequestStatus.ConsumerEnrollmentRunning)
+                if (source.Status == ScheduleVisitStatus.ConsumerEnrollmentRunning)
                 {
                     // Retrieve previously started enrollment 
                 }
 
                 // if enrollment has not started, do another one
-                await ChangeStatus(source.StatusRecord, RequestStatus.ConsumerEnrollmentRunning);
+                await ChangeStatus(source, ScheduleVisitStatus.ConsumerEnrollmentRunning);
 
                 // TODO: Enroll consumer here
 
-                return RequestStatus.ScheduleVisitPending;
-            }
-            catch(OperationCanceledException)
-            {
-                throw; // operation has been cancelled by host (graceful shutdown)
+                return ScheduleVisitStatus.ScheduleVisitPending;
             }
 
-            catch (Exception ex)
+            catch (OperationCanceledException)
             {
-                throw new ScheduleVisitException("Consumer enrollment failed.", RequestStatus.ConsumerEnrollnmentFailed, ex);
+                throw;
+            }
+            catch (Exception ex) 
+            {
+                throw CreateTransitionError("Consumer enrollment failed.", ScheduleVisitStatus.ConsumerEnrollnmentFailed, ex);
             }
         }
 
-        async Task<RequestStatus> ScheduleVisitForEnrolledConsumer(ScheduleVisitActor source)
+        async Task<ScheduleVisitStatus> ScheduleVisitForEnrolledConsumer(ScheduleVisitActor source)
         {
             try
             {
-                _cancellationToken.ThrowIfCancellationRequested();
+                CancellationToken.ThrowIfCancellationRequested();
 
                 if (source.Data == null)
                 {
-                    source.Data = await _service.GetScheduleVistRequest(source.StatusRecord.RequestId);
+                    source.Data = await ScheduleService.GetScheduleVisitRequest(source.StatusRecord.RequestId);
                 }
 
-                await ChangeStatus(source.StatusRecord, RequestStatus.ScheduleVisitRunning);
+                await ChangeStatus(source, ScheduleVisitStatus.ScheduleVisitRunning);
 
                 // TODO: schedule visit here
 
-                return RequestStatus.ScheduleVisitCompleted;
+                return ScheduleVisitStatus.ScheduleVisitCompleted;
             }
             catch(OperationCanceledException)
             {
@@ -170,54 +110,10 @@ namespace StateMachines
             }
             catch (Exception ex)
             {
-                throw new ScheduleVisitException("Schedule visit failed.", RequestStatus.ScheduleVisitFailed, ex);
+                throw CreateTransitionError("Schedule visit failed.", ScheduleVisitStatus.ScheduleVisitFailed, ex);
             }
         }
 
-        async Task ProcessTransition(ScheduleVisitTransition transition)
-        {
-            try
-            {
-                await transition.ExecuteAsync();
-            }
-            catch (OperationCanceledException)
-            {
-            }
-            catch(ScheduleVisitException ex)
-            {
-                await ChangeStatusWithError(transition.Source.StatusRecord, ex.ErrorStatus, ex.Message, ex.InnerException);
-            }
-            catch(Exception ex)
-            {
-                await ChangeStatusWithError(transition.Source.StatusRecord, RequestStatus.ScheduleVisitFailed, "Unexpected error occured.", ex);
-            }
-
-        }
-
-        async Task ChangeStatus(RequestStatusRecord record,  RequestStatus newStatus)
-        {
-            if (record.Status == newStatus)
-            {
-                return;
-            }
-
-            await _service.ChangeStatus(record, newStatus, null);
-            record.Status = newStatus;
-        }
-
-        async Task ChangeStatusWithError(RequestStatusRecord record, RequestStatus newStatus, string message, Exception ex)
-        {
-            // TODO: Log exception
-            await _service.ChangeStatus(record, newStatus, message);
-            record.Status = newStatus;
-
-        }
-
-        Countdown _countdown;
-        CancellationToken _cancellationToken;
-        IScheduleService _service;
-        ActionBlock<ScheduleVisitActor> _dispatcher;
-        ActionBlock<ScheduleVisitTransition> _processor;
     }
 
 }

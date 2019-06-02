@@ -7,9 +7,9 @@ namespace StateMachines
 
 
     // Merges all statuses for all request types
-    public enum RequestStatus
+    public enum ScheduleVisitStatus
     {
-        NewVisit = 0,
+        Draft = 0,
         ConsumerEnrollmentPending = 1,
         ConsumerEnrollmentRunning = 2,
         ScheduleVisitPending = 3,
@@ -21,11 +21,7 @@ namespace StateMachines
         ScheduleVisitFailed = 1002
     }
 
-    public enum RequestType
-    {
-        ScheduleVisit,
-        WrapUp
-    }
+
 
     // Full information about ScheduleVisit request
     public class ScheduleVisitRequest
@@ -36,12 +32,4 @@ namespace StateMachines
         public string Email { get; set; }
     }
 
-    // Concise information about request (type and the current status)
-    public class RequestStatusRecord
-    {
-        public long RequestId;
-
-        public RequestType RequestType;
-        public RequestStatus Status { get; set; }
-    }
 }
