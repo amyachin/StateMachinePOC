@@ -115,16 +115,22 @@ namespace StateMachines
             _dispatcher = new ActionBlock<TActor>((Action<TActor>)DispatchActor, new ExecutionDataflowBlockOptions { CancellationToken = cancellationToken });
             _processor = new ActionBlock<StateTransition<TActor, TStatus>>(ProcessTransition, new ExecutionDataflowBlockOptions { CancellationToken = cancellationToken, MaxDegreeOfParallelism = DataflowBlockOptions.Unbounded });
 
-            while (await ProcessQueueAsync(batch))
+            try
             {
-                batch = await GetPendingActorsFromQueue();
+                while (await ProcessQueueAsync(batch))
+                {
+                    batch = await GetPendingActorsFromQueue();
+                }
+
             }
+            finally
+            {
+                // Ensure that processing threads are no longer running
+                _processor.Complete();
+                _dispatcher.Complete();
 
-            // Ensure that processing threads are no longer running
-            _processor.Complete();
-            _dispatcher.Complete();
-
-            await Task.WhenAll(_dispatcher.Completion, _processor.Completion);
+                await Task.WhenAll(_dispatcher.Completion, _processor.Completion);
+            }
         }
 
         private async Task<bool> ProcessQueueAsync(IReadOnlyList<TActor> items)
@@ -151,7 +157,16 @@ namespace StateMachines
                 _countdown.Dispose();
             }
 
-            return ((items is ListFragment<TActor> v)) ? v.MoreDataPending : false;
+            if (!_processor.Completion.IsCompleted && !_dispatcher.Completion.IsCompleted)
+            {
+                return ((items is ListFragment<TActor> v)) ? v.MoreDataPending : false;
+            }
+            else
+            {
+                return false;
+            }
+
+
         }
 
         private void DispatchActor(TActor actor)
