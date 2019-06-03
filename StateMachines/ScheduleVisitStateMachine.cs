@@ -31,11 +31,13 @@ namespace StateMachines
 
         private new IScheduleVisitService ScheduleService => (IScheduleVisitService) base.ScheduleService;
 
-        protected override async Task<IList<ScheduleVisitActor>> GetPendingActorsFromQueue()
+        protected override async Task<IReadOnlyList<ScheduleVisitActor>> GetPendingActorsFromQueue()
         {
-            return (await ScheduleService.GetPendingItems(100, CancellationToken ))
-                .Select(it => new ScheduleVisitActor(it))
-                .ToList();
+            int maxCount = 100;
+
+            return (await ScheduleService.GetPendingItems(maxCount, CancellationToken))
+                   .Select(it => new ScheduleVisitActor(it))
+                   .ToFragment(maxCount);
         }
 
         protected override StateTransition<ScheduleVisitActor, ScheduleVisitStatus> GetNextTransition(ScheduleVisitActor actor)

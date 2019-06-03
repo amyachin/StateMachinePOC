@@ -8,7 +8,7 @@ namespace StateMachines
 {
     public interface IScheduleService
     {
-        Task<IList<QueueItem>> GetPendingItems(int maxCount, CancellationToken cancellationToken);
+        Task<IEnumerable<QueueItem>> GetPendingItems(int maxCount, CancellationToken cancellationToken);
 
         Task ChangeStatus(QueueItem item, object newStatusId, string message);
     }

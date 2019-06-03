@@ -1,5 +1,6 @@
 ﻿using Microsoft.Extensions.Logging;
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Text;
 using System.Threading;
@@ -86,6 +87,52 @@ namespace StateMachines
         public object ErrorStatus { get; }
     }
 
+    public class ListFragment<T> : IReadOnlyList<T>
+    {
+        public ListFragment(IEnumerable<T> items, bool moreDataPending)
+        {
+            Items = new List<T>(items);
+            MoreDataPending = moreDataPending;
+        }
+
+        public ListFragment(IEnumerable<T> items, int capacity)
+        {
+            Items = new List<T>(items);
+            MoreDataPending = Items.Count >= capacity;
+        }
+
+        public bool MoreDataPending { get; }
+
+        private IReadOnlyList<T> Items { get; }
+
+        public int Count => Items.Count;
+
+        public T this[int index] => Items[index];
+
+        public IEnumerator<T> GetEnumerator()
+        {
+            return Items.GetEnumerator();
+        }
+
+        IEnumerator IEnumerable.GetEnumerator()
+        {
+            return Items.GetEnumerator();
+        }
+    }
+
+    public static class ListFragmentExtensions
+    {
+        public static ListFragment<TActor> ToFragment<TActor>(this IEnumerable<TActor> items, bool moreData)
+        {
+            return new ListFragment<TActor>(items, moreData);
+        }
+        public static ListFragment<TActor> ToFragment<TActor>(this IEnumerable<TActor> items, int capacity)
+        {
+            return new ListFragment<TActor>(items, capacity);
+        }
+
+    }
+
     public abstract class StateMachine<TActor, TStatus> 
         where TActor : Actor<TStatus>
         where TStatus : struct
@@ -101,7 +148,8 @@ namespace StateMachines
         public async Task ExecuteAsync(CancellationToken cancellationToken)
         {
             this.CancellationToken = cancellationToken;
-            IList<TActor> batch = await GetPendingActorsFromQueue();
+
+            IReadOnlyList<TActor> batch = await GetPendingActorsFromQueue();
 
             if (batch.Count == 0)
             {
@@ -109,32 +157,46 @@ namespace StateMachines
                 return;
             }
 
-            _countdown = new Countdown(batch.Count);
+            _dispatcher = new ActionBlock<TActor>((Action<TActor>)DispatchActor, new ExecutionDataflowBlockOptions { CancellationToken = cancellationToken });
+            _processor = new ActionBlock<StateTransition<TActor, TStatus>>(ProcessTransition, new ExecutionDataflowBlockOptions { CancellationToken = cancellationToken, MaxDegreeOfParallelism = DataflowBlockOptions.Unbounded });
+
+            while (await ProcessQueueAsync(batch))
+            {
+                batch = await GetPendingActorsFromQueue();
+            }
+
+            // Ensure that processing threads are no longer running
+            _processor.Complete();
+            _dispatcher.Complete();
+
+            await Task.WhenAll(_dispatcher.Completion, _processor.Completion);
+        }
+
+        private async Task<bool> ProcessQueueAsync(IReadOnlyList<TActor> items)
+        {
+            if (items.Count == 0)
+            {
+                return false;
+            }
+
+            _countdown = new Countdown(items.Count);
 
             try
             {
-                _dispatcher = new ActionBlock<TActor>((Action<TActor>)DispatchActor, new ExecutionDataflowBlockOptions { CancellationToken = cancellationToken });
-                _processor = new ActionBlock<StateTransition<TActor, TStatus>>(ProcessTransition, new ExecutionDataflowBlockOptions { CancellationToken = cancellationToken, MaxDegreeOfParallelism = DataflowBlockOptions.Unbounded });
-
-                foreach (var item in batch)
+                foreach (var item in items)
                 {
                     _dispatcher.Post(item);
                 }
 
-                var countdownTask = _countdown.WaitAsync(cancellationToken);
-
+                var countdownTask = _countdown.WaitAsync(CancellationToken);
                 await Task.WhenAny(countdownTask, _processor.Completion, _dispatcher.Completion);
-
-                // Ensure that processing threads are no longer running
-                _processor.Complete();
-                _dispatcher.Complete();
-
-                await Task.WhenAll(_dispatcher.Completion, _processor.Completion);
             }
             finally
             {
                 _countdown.Dispose();
             }
+
+            return ((items is ListFragment<TActor> v)) ? v.MoreDataPending : false;
         }
 
         private void DispatchActor(TActor actor)
@@ -212,7 +274,7 @@ namespace StateMachines
 
         }
 
-        protected abstract Task<IList<TActor>> GetPendingActorsFromQueue();
+        protected abstract Task<IReadOnlyList<TActor>> GetPendingActorsFromQueue();
 
         protected abstract StateTransition<TActor, TStatus> GetNextTransition(TActor actor);
 

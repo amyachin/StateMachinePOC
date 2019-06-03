@@ -44,13 +44,10 @@ namespace StateMachines.UnitTests
             return Task.CompletedTask;
         }
 
-        public Task<IList<QueueItem>> GetPendingItems(int maxCount, CancellationToken cancellationToken)
+        public Task<IEnumerable<QueueItem>> GetPendingItems(int maxCount, CancellationToken cancellationToken)
         {
-            var result = PendingRequests
-                .Take(maxCount)
-                .ToList();
-
-            return Task.FromResult<IList<QueueItem>>(result);
+            var result = PendingRequests.Take(maxCount);
+            return Task.FromResult(result);
         }
 
         public Task<ScheduleVisitRequest> GetScheduleVisitRequest(long requestId)
