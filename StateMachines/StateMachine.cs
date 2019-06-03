@@ -103,14 +103,13 @@ namespace StateMachines
                 return;
             }
 
-            CancellationToken = cancellationToken;
-
-            _dispatcher = new ActionBlock<TActor>((Action<TActor>) DispatchActor, new ExecutionDataflowBlockOptions { CancellationToken = cancellationToken });
-            _processor = new ActionBlock<StateTransition<TActor, TStatus>>(ProcessTransition, new ExecutionDataflowBlockOptions { CancellationToken = cancellationToken, MaxDegreeOfParallelism = DataflowBlockOptions.Unbounded });
             _countdown = new Countdown(batch.Count);
 
             try
             {
+                _dispatcher = new ActionBlock<TActor>((Action<TActor>)DispatchActor, new ExecutionDataflowBlockOptions { CancellationToken = cancellationToken });
+                _processor = new ActionBlock<StateTransition<TActor, TStatus>>(ProcessTransition, new ExecutionDataflowBlockOptions { CancellationToken = cancellationToken, MaxDegreeOfParallelism = DataflowBlockOptions.Unbounded });
+
                 foreach (var item in batch)
                 {
                     _dispatcher.Post(item);
