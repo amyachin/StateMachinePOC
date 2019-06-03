@@ -92,8 +92,7 @@ namespace StateMachines
             DefaultErrorStatus = defaultErrorStatus;
         }
 
-
-        public virtual async Task ExecuteAsync(CancellationToken cancellationToken)
+        public async Task ExecuteAsync(CancellationToken cancellationToken)
         {
             this.CancellationToken = cancellationToken;
             IList<TActor> batch = await GetPendingActorsFromQueue();
@@ -117,8 +116,11 @@ namespace StateMachines
                     _dispatcher.Post(item);
                 }
 
-                await _countdown.WaitAsync(cancellationToken);
+                var countdownTask = _countdown.WaitAsync(cancellationToken);
 
+                await Task.WhenAny(countdownTask, _processor.Completion, _dispatcher.Completion);
+
+                // Ensure that processing threads are no longer running
                 _processor.Complete();
                 _dispatcher.Complete();
 
@@ -156,21 +158,28 @@ namespace StateMachines
 
         private async Task ProcessTransition(StateTransition<TActor, TStatus> transition)
         {
-            // Capture status value before executng the transition
-            TStatus prevStatus = transition.Source.Status;
-
             try
             {
                 CancellationToken.ThrowIfCancellationRequested();
+
+                // Capture status value before executng the transition
+                TStatus prevStatus = transition.Source.Status;
                 var newStatus = await transition.ExecuteAsync();
                 await ChangeStatus(transition.Source, newStatus);
+
+                if (transition.Source.Status.Equals(prevStatus))
+                {
+                    Logger.LogWarning("Status did not change during transition - possible logical error (status = {status}).", prevStatus);
+                }
+
+                // Place the actor to dispatcher queue
+                _dispatcher.Post(transition.Source);
             }
             catch (OperationCanceledException)
             {
                 // Operation has been cancelled, simply drop the item
                 // Since the state did not change the item will be picked up again from the queue
                 _countdown.Release();
-                return;
             }
             catch (StateMachineException ex)
             {
@@ -178,25 +187,17 @@ namespace StateMachines
                 // Since the state did not change the item will be picked up again from the queue
                 Logger.LogError(ex, ex.Message);
                 _countdown.Release();
-                return;
             }
             catch (StateTransitionException ex)
             {
                 await SetErrorStatus(transition.Source, (TStatus)ex.ErrorStatus, ex.Message, ex.InnerException);
+                _countdown.Release();
             }
             catch (Exception ex)
             {
                 await SetErrorStatus(transition.Source, DefaultErrorStatus, "Unexpected error occured.", ex);
+                _countdown.Release();
             }
-
-
-            if (transition.Source.Status.Equals(prevStatus))
-            {
-                Logger.LogWarning("Status did not change during transition - possible logical error (status = {status}).", prevStatus);
-            }
-
-            // Place the actor to dispatcher queue
-            _dispatcher.Post(transition.Source);
 
         }
 
