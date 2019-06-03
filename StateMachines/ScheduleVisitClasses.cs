@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Text;
+using System.Threading.Tasks;
 
 namespace StateMachines
 {
@@ -31,5 +32,12 @@ namespace StateMachines
         public string LastName { get; set; }
         public string Email { get; set; }
     }
+
+
+    public interface IScheduleVisitService : IScheduleService
+    {
+        Task<ScheduleVisitRequest> GetScheduleVisitRequest(long requestId);
+    }
+
 
 }

@@ -12,33 +12,33 @@ namespace StateMachines
     public class Actor<TStatus> 
         where TStatus : struct
     {
-        public Actor(RequestStatusRecord statusRecord)
+        public Actor(QueueItem item)
         {
-            StatusRecord = statusRecord;
+            Item = item;
         }
 
-        public RequestStatusRecord StatusRecord { get; }
+        public QueueItem Item { get; }
 
         public TStatus Status
         {
             get
             {
-                return ConvertStatusIdToStatus(StatusRecord.StatusId);
+                return ConvertStatusIdToStatus(Item.StatusId);
             }
             set
             {
-                StatusRecord.StatusId = ConvertStatusToStatusId(value);
+                Item.StatusId = ConvertStatusToStatusId(value);
             }
         }
 
-        public virtual int ConvertStatusToStatusId(TStatus status)
+        public virtual object ConvertStatusToStatusId(TStatus status)
         {
-            return (int)Convert.ChangeType(status, Enum.GetUnderlyingType(typeof(TStatus)));
+            return Convert.ChangeType(status, Enum.GetUnderlyingType(typeof(TStatus)));
         }
 
-        public virtual TStatus ConvertStatusIdToStatus(int id)
+        public virtual TStatus ConvertStatusIdToStatus(object statusId)
         {
-            return (TStatus)(object)StatusRecord.StatusId;
+            return (TStatus)Item.StatusId;
 
         }
 
@@ -240,7 +240,7 @@ namespace StateMachines
 
             try
             {
-                await ScheduleService.ChangeStatus(actor.StatusRecord, actor.ConvertStatusToStatusId(newStatus), null);
+                await ScheduleService.ChangeStatus(actor.Item, actor.ConvertStatusToStatusId(newStatus), null);
                 actor.Status = newStatus;
             }
 
@@ -255,8 +255,8 @@ namespace StateMachines
             // This method should not throw, see ProcessTranstions for the usage pattern
             try
             {
-                Logger.LogError(ex, "Process error: {message} (requestId : {requestId}, status: {status}).", message, actor.StatusRecord.RequestId, actor.Status);
-                await ScheduleService.ChangeStatus(actor.StatusRecord, actor.ConvertStatusToStatusId(newStatus), message);
+                Logger.LogError(ex, "Process error: {message} (ItemId : {itemId}, Status: {status}).", message, actor.Item.Id, actor.Status);
+                await ScheduleService.ChangeStatus(actor.Item, actor.ConvertStatusToStatusId(newStatus), message);
                 actor.Status = newStatus;
             }
             catch (Exception exception)

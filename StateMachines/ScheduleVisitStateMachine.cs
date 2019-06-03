@@ -13,7 +13,7 @@ namespace StateMachines
 
     public class ScheduleVisitActor : Actor<ScheduleVisitStatus>
     {
-        public ScheduleVisitActor(RequestStatusRecord statusRecord) : base(statusRecord)
+        public ScheduleVisitActor(QueueItem item) : base(item)
         {
         }
 
@@ -22,16 +22,18 @@ namespace StateMachines
         // TODO: Add enrollment-specific data 
     }
 
+    
     public class ScheduleVisitStateMachine : StateMachine<ScheduleVisitActor, ScheduleVisitStatus>
     {
-        public ScheduleVisitStateMachine(ILoggerFactory loggerFactory, IScheduleService service) : base(loggerFactory, service, ScheduleVisitStatus.ScheduleVisitFailed)
+        public ScheduleVisitStateMachine(ILoggerFactory loggerFactory, IScheduleVisitService service) : base(loggerFactory, service, ScheduleVisitStatus.ScheduleVisitFailed)
         {
         }
 
+        private new IScheduleVisitService ScheduleService => (IScheduleVisitService) base.ScheduleService;
 
         protected override async Task<IList<ScheduleVisitActor>> GetPendingActorsFromQueue()
         {
-            return (await ScheduleService.GetPendingRequests(RequestType.ScheduleVisit, 100))
+            return (await ScheduleService.GetPendingItems(100, CancellationToken ))
                 .Select(it => new ScheduleVisitActor(it))
                 .ToList();
         }
@@ -61,7 +63,7 @@ namespace StateMachines
 
                 if (source.Data == null)
                 {
-                    source.Data = await ScheduleService.GetScheduleVisitRequest(source.StatusRecord.RequestId);
+                    source.Data = await ScheduleService.GetScheduleVisitRequest(source.Item.Id);
                 }
 
                 if (source.Status == ScheduleVisitStatus.ConsumerEnrollmentRunning)
@@ -95,7 +97,7 @@ namespace StateMachines
 
                 if (source.Data == null)
                 {
-                    source.Data = await ScheduleService.GetScheduleVisitRequest(source.StatusRecord.RequestId);
+                    source.Data = await ScheduleService.GetScheduleVisitRequest(source.Item.Id);
                 }
 
                 await ChangeStatus(source, ScheduleVisitStatus.ScheduleVisitRunning);

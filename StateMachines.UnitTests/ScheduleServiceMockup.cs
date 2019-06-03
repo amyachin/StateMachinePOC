@@ -3,19 +3,20 @@ using System.Collections.Generic;
 using System.Text;
 using System.Threading.Tasks;
 using System.Linq;
+using System.Threading;
 
 namespace StateMachines.UnitTests
 {
-    class ScheduleServiceMockup : IScheduleService
+    class ScheduleServiceMockup : IScheduleVisitService
     {
 
         public static ScheduleServiceMockup CreateBasic()
         {
             var mockup = new ScheduleServiceMockup();
-            mockup.PendingRequests.Add(new RequestStatusRecord { RequestId = 1, RequestType = RequestType.ScheduleVisit, StatusId = (int)ScheduleVisitStatus.ConsumerEnrollmentPending });
-            mockup.PendingRequests.Add(new RequestStatusRecord { RequestId = 2, RequestType = RequestType.ScheduleVisit, StatusId = (int)ScheduleVisitStatus.ConsumerEnrollmentRunning });
-            mockup.PendingRequests.Add(new RequestStatusRecord { RequestId = 3, RequestType = RequestType.ScheduleVisit, StatusId = (int)ScheduleVisitStatus.ScheduleVisitPending });
-            mockup.PendingRequests.Add(new RequestStatusRecord { RequestId = 4, RequestType = RequestType.ScheduleVisit, StatusId = (int)ScheduleVisitStatus.ScheduleVisitRunning});
+            mockup.PendingRequests.Add(new QueueItem { Id = 1, StatusId = (int)ScheduleVisitStatus.ConsumerEnrollmentPending });
+            mockup.PendingRequests.Add(new QueueItem { Id = 2, StatusId = (int)ScheduleVisitStatus.ConsumerEnrollmentRunning });
+            mockup.PendingRequests.Add(new QueueItem { Id = 3, StatusId = (int)ScheduleVisitStatus.ScheduleVisitPending });
+            mockup.PendingRequests.Add(new QueueItem { Id = 4, StatusId = (int)ScheduleVisitStatus.ScheduleVisitRunning});
 
 
 
@@ -30,27 +31,26 @@ namespace StateMachines.UnitTests
 
         public ScheduleServiceMockup()
         {
-            PendingRequests = new List<RequestStatusRecord>();
+            PendingRequests = new List<QueueItem>();
             ScheduleVisitRequests = new List<ScheduleVisitRequest>();
         }
 
-        public List<RequestStatusRecord> PendingRequests { get; }
+        public List<QueueItem> PendingRequests { get; }
 
         public List<ScheduleVisitRequest> ScheduleVisitRequests { get; }
 
-        public Task ChangeStatus(RequestStatusRecord record, int newStatusId, string message)
+        public Task ChangeStatus(QueueItem item, object newStatusId, string message)
         {
             return Task.CompletedTask;
         }
 
-        public Task<IList<RequestStatusRecord>> GetPendingRequests(RequestType type, int maxCount)
+        public Task<IList<QueueItem>> GetPendingItems(int maxCount, CancellationToken cancellationToken)
         {
             var result = PendingRequests
-                .Where(it => it.RequestType == type)
                 .Take(maxCount)
                 .ToList();
 
-            return Task.FromResult<IList<RequestStatusRecord>>(result);
+            return Task.FromResult<IList<QueueItem>>(result);
         }
 
         public Task<ScheduleVisitRequest> GetScheduleVisitRequest(long requestId)
