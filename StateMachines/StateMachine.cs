@@ -163,6 +163,8 @@ namespace StateMachines
 
         private async Task ProcessTransition(StateTransition<TActor, TStatus> transition)
         {
+            var dispatched = false;
+
             try
             {
                 CancellationToken.ThrowIfCancellationRequested();
@@ -179,29 +181,33 @@ namespace StateMachines
 
                 // Place the actor to dispatcher queue
                 _dispatcher.Post(transition.Source);
+                dispatched = true;
             }
             catch (OperationCanceledException)
             {
                 // Operation has been cancelled, simply drop the item
                 // Since the state did not change the item will be picked up again from the queue
-                _countdown.Release();
             }
             catch (StateMachineException ex)
             {
                 // Process terminated due to internal issues, log message and drop the item
                 // Since the state did not change the item will be picked up again from the queue
                 Logger.LogError(ex, ex.Message);
-                _countdown.Release();
             }
             catch (StateTransitionException ex)
             {
                 await SetErrorStatus(transition.Source, (TStatus)ex.ErrorStatus, ex.Message, ex.InnerException);
-                _countdown.Release();
             }
             catch (Exception ex)
             {
                 await SetErrorStatus(transition.Source, DefaultErrorStatus, "Unexpected error occured.", ex);
-                _countdown.Release();
+            }
+            finally
+            {
+                if (!dispatched)
+                {
+                    _countdown.Release();
+                }
             }
 
         }
