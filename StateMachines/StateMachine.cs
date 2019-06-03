@@ -38,6 +38,26 @@ namespace StateMachines
 
     }
 
+    public class StateTransition<TActor, TStatus>
+        where TActor: Actor<TStatus>
+        where TStatus: struct
+    {
+        public StateTransition(TActor source, Func<TActor, Task<TStatus>> operation)
+        {
+            Source = source;
+            Operation = operation;
+        }
+
+        public Task<TStatus> ExecuteAsync()
+        {
+            return Operation(Source);
+        }
+
+        public TActor Source { get; }
+
+        private Func<TActor, Task<TStatus>> Operation { get; }
+    }
+
     public class StateMachineException : Exception
     {
         public StateMachineException(string message) :base(message)
@@ -50,9 +70,9 @@ namespace StateMachines
         }
     }
     
-    public class StateTransitionError : Exception
+    public class StateTransitionException : Exception
     {
-        public StateTransitionError(string message, object errorStatus, Exception innerException) : base(message, innerException)
+        public StateTransitionException(string message, object errorStatus, Exception innerException) : base(message, innerException)
         {
             ErrorStatus = errorStatus;
         }
@@ -72,29 +92,11 @@ namespace StateMachines
             DefaultErrorStatus = defaultErrorStatus;
         }
 
-        public class StateTransition
-        {
-            public StateTransition(TActor source, Func<TActor, Task<TStatus>> operation)
-            {
-                Source = source;
-                Operation = operation;
-            }
-
-            public Task<TStatus> ExecuteAsync()
-            {
-                return Operation(Source);
-            }
-
-            public TActor Source { get; }
-
-            private Func<TActor, Task<TStatus>> Operation { get; }
-        }
-
 
         public virtual async Task ExecuteAsync(CancellationToken cancellationToken)
         {
             this.CancellationToken = cancellationToken;
-            IList<TActor> batch = await GetPendingMessagesFromQueue();
+            IList<TActor> batch = await GetPendingActorsFromQueue();
 
             if (batch.Count == 0)
             {
@@ -104,8 +106,8 @@ namespace StateMachines
 
             CancellationToken = cancellationToken;
 
-            _dispatcher = new ActionBlock<TActor>(DispatchActor, new ExecutionDataflowBlockOptions { CancellationToken = cancellationToken });
-            _processor = new ActionBlock<StateTransition>(ProcessTransition, new ExecutionDataflowBlockOptions { CancellationToken = cancellationToken, MaxDegreeOfParallelism = DataflowBlockOptions.Unbounded });
+            _dispatcher = new ActionBlock<TActor>((Action<TActor>) DispatchActor, new ExecutionDataflowBlockOptions { CancellationToken = cancellationToken });
+            _processor = new ActionBlock<StateTransition<TActor, TStatus>>(ProcessTransition, new ExecutionDataflowBlockOptions { CancellationToken = cancellationToken, MaxDegreeOfParallelism = DataflowBlockOptions.Unbounded });
             _countdown = new Countdown(batch.Count);
 
             try
@@ -130,7 +132,7 @@ namespace StateMachines
 
         private void DispatchActor(TActor actor)
         {
-            StateTransition transition = null;
+            StateTransition<TActor, TStatus> transition = null;
             try
             {
                 transition = GetNextTransition(actor);
@@ -141,7 +143,7 @@ namespace StateMachines
             }
 
 
-            if (transition != null)
+            if (transition != null && transition.Source != null)
             {
                 _processor.Post(transition);
             }
@@ -152,7 +154,7 @@ namespace StateMachines
             }
         }
 
-        private async Task ProcessTransition(StateTransition transition)
+        private async Task ProcessTransition(StateTransition<TActor, TStatus> transition)
         {
             // Capture status value before executng the transition
             TStatus prevStatus = transition.Source.Status;
@@ -178,7 +180,7 @@ namespace StateMachines
                 _countdown.Release();
                 return;
             }
-            catch (StateTransitionError ex)
+            catch (StateTransitionException ex)
             {
                 await SetErrorStatus(transition.Source, (TStatus)ex.ErrorStatus, ex.Message, ex.InnerException);
             }
@@ -198,18 +200,23 @@ namespace StateMachines
 
         }
 
-        protected abstract Task<IList<TActor>> GetPendingMessagesFromQueue();
+        protected abstract Task<IList<TActor>> GetPendingActorsFromQueue();
 
-        protected abstract StateTransition GetNextTransition(TActor actor);
+        protected abstract StateTransition<TActor, TStatus> GetNextTransition(TActor actor);
 
-        protected StateTransition CreateTransition(TActor actor, Func<TActor, Task<TStatus>> operation)
+        protected StateTransition<TActor, TStatus> CreateTransition(TActor actor, Func<TActor, Task<TStatus>> operation)
         {
-            return new StateTransition(actor, operation);
+            return new StateTransition<TActor, TStatus>(actor, operation);
         }
 
-        protected StateTransitionError CreateTransitionError(string message, TStatus errorStatus, Exception innerException)
+        protected StateTransition<TActor, TStatus> Done()
         {
-            return new StateTransitionError(message, errorStatus, innerException);
+            return _doneTransition;
+        }
+
+        protected StateTransitionException CreateTransitionError(string message, TStatus errorStatus, Exception innerException)
+        {
+            return new StateTransitionException(message, errorStatus, innerException);
         }
 
         protected async Task ChangeStatus(TActor actor, TStatus newStatus)
@@ -248,7 +255,6 @@ namespace StateMachines
 
         }
 
-
         protected CancellationToken CancellationToken { get; private set; }
 
         protected ILogger Logger { get; }
@@ -257,8 +263,10 @@ namespace StateMachines
 
         protected TStatus DefaultErrorStatus { get; }
 
+        static StateTransition<TActor, TStatus> _doneTransition = new StateTransition<TActor, TStatus>(null, null);
+        
         Countdown _countdown;
         ActionBlock<TActor> _dispatcher;
-        ActionBlock<StateTransition> _processor;
+        ActionBlock<StateTransition<TActor, TStatus>> _processor;
     }
 }

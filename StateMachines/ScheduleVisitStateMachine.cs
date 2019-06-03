@@ -29,14 +29,14 @@ namespace StateMachines
         }
 
 
-        protected override async Task<IList<ScheduleVisitActor>> GetPendingMessagesFromQueue()
+        protected override async Task<IList<ScheduleVisitActor>> GetPendingActorsFromQueue()
         {
             return (await ScheduleService.GetPendingRequests(RequestType.ScheduleVisit, 100))
                 .Select(it => new ScheduleVisitActor(it))
                 .ToList();
         }
 
-        protected override StateTransition GetNextTransition(ScheduleVisitActor actor)
+        protected override StateTransition<ScheduleVisitActor, ScheduleVisitStatus> GetNextTransition(ScheduleVisitActor actor)
         {
             switch (actor.Status)
             {
@@ -49,7 +49,7 @@ namespace StateMachines
                     return CreateTransition(actor, ScheduleVisitForEnrolledConsumer);
 
                 default:
-                    return null;
+                    return Done();
             }
         }
 
