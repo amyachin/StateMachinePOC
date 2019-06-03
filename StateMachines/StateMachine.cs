@@ -23,7 +23,7 @@ namespace StateMachines
         {
             get
             {
-                return (TStatus)(object)StatusRecord.StatusId;
+                return ConvertStatusIdToStatus(StatusRecord.StatusId);
             }
             set
             {
@@ -31,9 +31,15 @@ namespace StateMachines
             }
         }
 
-        public static int ConvertStatusToStatusId(TStatus value)
+        public virtual int ConvertStatusToStatusId(TStatus status)
         {
-            return(int)Convert.ChangeType(value, Enum.GetUnderlyingType(typeof(TStatus)));
+            return (int)Convert.ChangeType(status, Enum.GetUnderlyingType(typeof(TStatus)));
+        }
+
+        public virtual TStatus ConvertStatusIdToStatus(int id)
+        {
+            return (TStatus)(object)StatusRecord.StatusId;
+
         }
 
     }
@@ -228,7 +234,7 @@ namespace StateMachines
 
             try
             {
-                await ScheduleService.ChangeStatus(actor.StatusRecord, Actor<TStatus>.ConvertStatusToStatusId(newStatus), null);
+                await ScheduleService.ChangeStatus(actor.StatusRecord, actor.ConvertStatusToStatusId(newStatus), null);
                 actor.Status = newStatus;
             }
 
@@ -244,7 +250,7 @@ namespace StateMachines
             try
             {
                 Logger.LogError(ex, "Process error: {message} (requestId : {requestId}, status: {status}).", message, actor.StatusRecord.RequestId, actor.Status);
-                await ScheduleService.ChangeStatus(actor.StatusRecord, Actor<TStatus>.ConvertStatusToStatusId(newStatus), message);
+                await ScheduleService.ChangeStatus(actor.StatusRecord, actor.ConvertStatusToStatusId(newStatus), message);
                 actor.Status = newStatus;
             }
             catch (Exception exception)
