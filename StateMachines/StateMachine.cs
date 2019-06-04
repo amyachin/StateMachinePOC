@@ -1,7 +1,9 @@
 ﻿using Microsoft.Extensions.Logging;
+using StateMachines.Internal;
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -11,43 +13,25 @@ namespace StateMachines
 {
 
     public class Actor<TStatus> 
-        where TStatus : struct
     {
-        public Actor(QueueItem item)
+        public Actor()
         {
-            Item = item;
         }
-
-        public QueueItem Item { get; }
 
         public TStatus Status
         {
-            get
-            {
-                return ConvertStatusIdToStatus(Item.StatusId);
-            }
-            set
-            {
-                Item.StatusId = ConvertStatusToStatusId(value);
-            }
+            get; set;
         }
 
-        public virtual object ConvertStatusToStatusId(TStatus status)
+        public override string ToString()
         {
-            return Convert.ChangeType(status, Enum.GetUnderlyingType(typeof(TStatus)));
-        }
-
-        public virtual TStatus ConvertStatusIdToStatus(object statusId)
-        {
-            return (TStatus)Item.StatusId;
-
+            return string.Format("Actor: {0}, Status: {1}", GetType(), Status);
         }
 
     }
 
     public class StateTransition<TActor, TStatus>
         where TActor: Actor<TStatus>
-        where TStatus: struct
     {
         public StateTransition(TActor source, Func<TActor, Task<TStatus>> operation)
         {
@@ -87,28 +71,82 @@ namespace StateMachines
         public object ErrorStatus { get; }
     }
 
-
-    public abstract class StateMachine<TActor, TStatus> 
+    public class StateMachineStatusChangingArgs<TActor, TStatus> : EventArgs
         where TActor : Actor<TStatus>
-        where TStatus : struct
+    {
+        public StateMachineStatusChangingArgs(TActor actor, TStatus newStatus, string message)
+        {
+            this.Actor = actor;
+            this.NewStatus = newStatus;
+            this.Message = message;
+        }
+
+        public TActor Actor
+        {
+            get; 
+        }
+
+        public TStatus NewStatus
+        {
+            get;
+            set;
+        }
+
+        public TStatus CurrentStatus
+        {
+            get { return Actor.Status; }
+        }
+        
+        public string Message { get; set; }
+    }
+
+    public interface IStateMachineInputQueue<TActor>
+    {
+        Task<bool> ReadAsync(CancellationToken cancellationToken);
+        IReadOnlyCollection<TActor> Data { get; }
+    }
+
+    public abstract class StateMachine<TActor, TStatus>
+        where TActor : Actor<TStatus>
     {
 
-        public StateMachine(ILoggerFactory loggerFactory, IScheduleService scheduleService, TStatus defaultErrorStatus)
+        public StateMachine(ILoggerFactory loggerFactory, TStatus defaultErrorStatus)
         {
             Logger = loggerFactory.CreateLogger(GetType());
-            ScheduleService = scheduleService;
             DefaultErrorStatus = defaultErrorStatus;
         }
 
-        public async Task ExecuteAsync(CancellationToken cancellationToken)
+        public Task ExecuteAsync(IEnumerable<TActor> input, CancellationToken cancellationToken)
+        {
+            if (input == null)
+            {
+                throw new ArgumentNullException("input");
+            }
+
+            return ExecuteAsyncCore(input, 0, cancellationToken);
+        }
+
+        public Task ExecuteAsync(IEnumerable<TActor> input, int batchSize, CancellationToken cancellationToken)
+        {
+            if (input == null)
+            {
+                throw new ArgumentNullException("input");
+            }
+
+            if (batchSize < 0)
+            {
+                throw new ArgumentOutOfRangeException("blockSize");
+            }
+
+            return ExecuteAsyncCore(input, batchSize, cancellationToken);
+        }
+
+        public async Task ExecuteAsync(IStateMachineInputQueue<TActor> inputQueue, CancellationToken cancellationToken)
         {
             this.CancellationToken = cancellationToken;
 
-            IReadOnlyList<TActor> batch = await GetPendingActorsFromQueue();
-
-            if (batch.Count == 0)
+            if (!await inputQueue.ReadAsync(cancellationToken))
             {
-                // Nothing to do
                 return;
             }
 
@@ -117,9 +155,12 @@ namespace StateMachines
 
             try
             {
-                while (await ProcessQueueAsync(batch))
+                bool hasData = true;
+
+                while (hasData)
                 {
-                    batch = await GetPendingActorsFromQueue();
+                    await ProcessQueueAsync(inputQueue.Data);
+                    hasData = await inputQueue.ReadAsync(cancellationToken);
                 }
 
             }
@@ -133,13 +174,17 @@ namespace StateMachines
             }
         }
 
-        private async Task<bool> ProcessQueueAsync(IReadOnlyList<TActor> items)
+        private async Task ExecuteAsyncCore(IEnumerable<TActor> input, int batchSize, CancellationToken cancellationToken)
         {
-            if (items.Count == 0)
+            using (var inputQueue = new StateMachineInputQueueImpl<TActor>(input, batchSize))
             {
-                return false;
+                await ExecuteAsync(inputQueue, cancellationToken).ConfigureAwait(false);
             }
+        }
 
+
+        private async Task ProcessQueueAsync(IReadOnlyCollection<TActor> items)
+        {
             _countdown = new Countdown(items.Count);
 
             try
@@ -156,17 +201,6 @@ namespace StateMachines
             {
                 _countdown.Dispose();
             }
-
-            if (!_processor.Completion.IsCompleted && !_dispatcher.Completion.IsCompleted)
-            {
-                return ((items is ListFragment<TActor> v)) ? v.MoreDataPending : false;
-            }
-            else
-            {
-                return false;
-            }
-
-
         }
 
         private void DispatchActor(TActor actor)
@@ -244,8 +278,6 @@ namespace StateMachines
 
         }
 
-        protected abstract Task<IReadOnlyList<TActor>> GetPendingActorsFromQueue();
-
         protected abstract StateTransition<TActor, TStatus> GetNextTransition(TActor actor);
 
         protected StateTransition<TActor, TStatus> CreateTransition(TActor actor, Func<TActor, Task<TStatus>> operation)
@@ -256,6 +288,11 @@ namespace StateMachines
         protected StateTransition<TActor, TStatus> Done()
         {
             return _doneTransition;
+        }
+
+        protected virtual Task OnStatusChanging(StateMachineStatusChangingArgs<TActor, TStatus> e)
+        {
+            return Task.CompletedTask;
         }
 
         protected StateTransitionException CreateTransitionError(string message, TStatus errorStatus, Exception innerException)
@@ -272,8 +309,9 @@ namespace StateMachines
 
             try
             {
-                await ScheduleService.ChangeStatus(actor.Item, actor.ConvertStatusToStatusId(newStatus), null);
-                actor.Status = newStatus;
+                var e = new StateMachineStatusChangingArgs<TActor, TStatus>(actor, newStatus, null);
+                await OnStatusChanging(e);
+                actor.Status = e.NewStatus;
             }
 
             catch(Exception ex)
@@ -287,8 +325,9 @@ namespace StateMachines
             // This method should not throw, see ProcessTranstions for the usage pattern
             try
             {
-                Logger.LogError(ex, "Process error: {message} (ItemId : {itemId}, Status: {status}).", message, actor.Item.Id, actor.Status);
-                await ScheduleService.ChangeStatus(actor.Item, actor.ConvertStatusToStatusId(newStatus), message);
+                Logger.LogError(ex, "Process error: {message} (Actor : {actor}).", message, actor);
+                var e = new StateMachineStatusChangingArgs<TActor, TStatus>(actor, newStatus, message);
+                await OnStatusChanging(e);
                 actor.Status = newStatus;
             }
             catch (Exception exception)
@@ -303,9 +342,8 @@ namespace StateMachines
 
         protected ILogger Logger { get; }
 
-        protected IScheduleService ScheduleService { get; }
-
         protected TStatus DefaultErrorStatus { get; }
+
 
         static StateTransition<TActor, TStatus> _doneTransition = new StateTransition<TActor, TStatus>(null, null);
         

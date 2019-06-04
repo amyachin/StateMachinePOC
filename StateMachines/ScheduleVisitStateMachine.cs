@@ -13,32 +13,29 @@ namespace StateMachines
 
     public class ScheduleVisitActor : Actor<ScheduleVisitStatus>
     {
-        public ScheduleVisitActor(QueueItem item) : base(item)
+        public ScheduleVisitActor() 
         {
         }
-
+        public long RequestId { get; set; }
         public ScheduleVisitRequest Data { get; set; }
 
-        // TODO: Add enrollment-specific data 
+        public override string ToString()
+        {
+            return string.Format("RequestId: {0}, Status: {1} ({2})", RequestId, Status, (int)Status);
+        }
+
+        // TODO: Enrollment-specific data 
     }
 
     
     public class ScheduleVisitStateMachine : StateMachine<ScheduleVisitActor, ScheduleVisitStatus>
     {
-        public ScheduleVisitStateMachine(ILoggerFactory loggerFactory, IScheduleVisitService service) : base(loggerFactory, service, ScheduleVisitStatus.ScheduleVisitFailed)
+        public ScheduleVisitStateMachine(ILoggerFactory loggerFactory, IScheduleVisitService service) : base(loggerFactory, ScheduleVisitStatus.ScheduleVisitFailed)
         {
+            ScheduleService = service;
         }
 
-        private new IScheduleVisitService ScheduleService => (IScheduleVisitService) base.ScheduleService;
-
-        protected override async Task<IReadOnlyList<ScheduleVisitActor>> GetPendingActorsFromQueue()
-        {
-            int maxCount = 100;
-
-            return (await ScheduleService.GetPendingItems(maxCount, CancellationToken))
-                   .Select(it => new ScheduleVisitActor(it))
-                   .ToFragment(maxCount);
-        }
+        private IScheduleVisitService ScheduleService { get; }
 
         protected override StateTransition<ScheduleVisitActor, ScheduleVisitStatus> GetNextTransition(ScheduleVisitActor actor)
         {
@@ -57,6 +54,11 @@ namespace StateMachines
             }
         }
 
+        protected override async Task OnStatusChanging(StateMachineStatusChangingArgs<ScheduleVisitActor, ScheduleVisitStatus> e)
+        {
+            await ScheduleService.ChangeStatus(e.Actor.RequestId, (int)e.CurrentStatus, (int)e.NewStatus, e.Message).ConfigureAwait(false);
+        }
+
         async Task<ScheduleVisitStatus> EnrollConsumer(ScheduleVisitActor source)
         {
             try
@@ -65,7 +67,7 @@ namespace StateMachines
 
                 if (source.Data == null)
                 {
-                    source.Data = await ScheduleService.GetScheduleVisitRequest(source.Item.Id);
+                    source.Data = await ScheduleService.GetScheduleVisitRequest(source.RequestId);
                 }
 
                 if (source.Status == ScheduleVisitStatus.ConsumerEnrollmentRunning)
@@ -99,7 +101,7 @@ namespace StateMachines
 
                 if (source.Data == null)
                 {
-                    source.Data = await ScheduleService.GetScheduleVisitRequest(source.Item.Id);
+                    source.Data = await ScheduleService.GetScheduleVisitRequest(source.RequestId);
                 }
 
                 await ChangeStatus(source, ScheduleVisitStatus.ScheduleVisitRunning);

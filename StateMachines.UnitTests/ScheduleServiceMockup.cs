@@ -7,6 +7,12 @@ using System.Threading;
 
 namespace StateMachines.UnitTests
 {
+    public class QueueItem
+    {
+        public long Id { get; set; }
+        public int StatusId { get; set; }
+    }
+
     class ScheduleServiceMockup : IScheduleVisitService
     {
 
@@ -39,8 +45,17 @@ namespace StateMachines.UnitTests
 
         public List<ScheduleVisitRequest> ScheduleVisitRequests { get; }
 
-        public Task ChangeStatus(QueueItem item, object newStatusId, string message)
+        public Task ChangeStatus(long requestId, int currentStatusId, int newStatusId, string message)
         {
+            var item = PendingRequests.First(it => it.Id == requestId);
+
+            if (item.StatusId != currentStatusId)
+            {
+                var msg = string.Format("StatusId mismatch (expected: {0}, actual: {1})", currentStatusId, item.StatusId);
+                throw new InvalidOperationException(msg);
+            }
+
+            item.StatusId = newStatusId;
             return Task.CompletedTask;
         }
 

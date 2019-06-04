@@ -7,7 +7,6 @@ namespace StateMachines
 {
 
 
-    // Merges all statuses for all request types
     public enum ScheduleVisitStatus
     {
         Draft = 0,
@@ -22,8 +21,6 @@ namespace StateMachines
         ScheduleVisitFailed = 1002
     }
 
-
-
     // Full information about ScheduleVisit request
     public class ScheduleVisitRequest
     {
@@ -33,9 +30,10 @@ namespace StateMachines
         public string Email { get; set; }
     }
 
-
-    public interface IScheduleVisitService : IScheduleService
+    public interface IScheduleVisitService 
     {
+        Task ChangeStatus(long requestId, int currentStatusId, int newStatusId, string message);
+
         Task<ScheduleVisitRequest> GetScheduleVisitRequest(long requestId);
     }
 

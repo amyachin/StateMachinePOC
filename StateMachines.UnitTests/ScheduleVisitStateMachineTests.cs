@@ -19,8 +19,7 @@ namespace StateMachines.UnitTests
             Assert.IsTrue(service.PendingRequests.All(it => !it.StatusId.Equals((int)ScheduleVisitStatus.ScheduleVisitCompleted)));
 
             ScheduleVisitStateMachine stateMachine = new ScheduleVisitStateMachine(factory, service);
-            await stateMachine.ExecuteAsync(CancellationToken.None);
-
+            await stateMachine.ExecuteAsync(service.PendingRequests.Select(it=> Helper.CreateScheduleVisitActor(it)), CancellationToken.None);
             Assert.IsTrue(service.PendingRequests.All(it => it.StatusId.Equals((int)ScheduleVisitStatus.ScheduleVisitCompleted)));
         }
 
@@ -31,20 +30,19 @@ namespace StateMachines.UnitTests
             var service = new ScheduleServiceMockup();
             LoggerFactory factory = new LoggerFactory();
             ScheduleVisitStateMachine stateMachine = new ScheduleVisitStateMachine(factory, service);
-            await stateMachine.ExecuteAsync(CancellationToken.None);
+            await stateMachine.ExecuteAsync(new ScheduleVisitActor[0], CancellationToken.None);
         }
 
         [TestMethod]
         public async Task TestCompletonOfSingleItem()
         {
             var service = ScheduleServiceMockup.CreateBasic();
-            service.PendingRequests.RemoveAll(it => it.Id != 1);
 
             LoggerFactory factory = new LoggerFactory();
             ScheduleVisitStateMachine stateMachine = new ScheduleVisitStateMachine(factory, service);
-            await stateMachine.ExecuteAsync(CancellationToken.None);
-
-            Assert.IsTrue(service.PendingRequests.All(it => it.StatusId.Equals((int)ScheduleVisitStatus.ScheduleVisitCompleted)));
+            var item = service.PendingRequests.First(it => it.Id == 1);
+            await stateMachine.ExecuteAsync(new[] { Helper.CreateScheduleVisitActor(item) }, CancellationToken.None);
+            Assert.IsTrue(item.StatusId.Equals((int)ScheduleVisitStatus.ScheduleVisitCompleted));
         }
     }
 }
