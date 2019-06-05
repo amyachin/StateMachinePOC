@@ -35,6 +35,7 @@ namespace StateMachines
             ScheduleService = service;
         }
 
+
         private IScheduleVisitService ScheduleService { get; }
 
         protected override StateTransition<ScheduleVisitActor, ScheduleVisitStatus> GetNextTransition(ScheduleVisitActor actor)
@@ -43,11 +44,11 @@ namespace StateMachines
             {
                 case ScheduleVisitStatus.ConsumerEnrollmentPending:
                 case ScheduleVisitStatus.ConsumerEnrollmentRunning:
-                    return CreateTransition(actor, EnrollConsumer);
+                    return CreateTransition(actor, EnrollConsumer, ScheduleVisitStatus.ConsumerEnrollnmentFailed);
 
                 case ScheduleVisitStatus.ScheduleVisitPending:
                 case ScheduleVisitStatus.ScheduleVisitRunning:
-                    return CreateTransition(actor, ScheduleVisitForEnrolledConsumer);
+                    return CreateTransition(actor, ScheduleVisitForEnrolledConsumer, ScheduleVisitStatus.ScheduleVisitFailed);
 
                 default:
                     return Done();
@@ -88,7 +89,6 @@ namespace StateMachines
             await ChangeStatus(source, ScheduleVisitStatus.ScheduleVisitRunning);
             
             // TODO: schedule visit here
-
             return ScheduleVisitStatus.ScheduleVisitCompleted;
         }
 

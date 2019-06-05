@@ -132,7 +132,7 @@ namespace StateMachines
         public string Message { get; set; }
     }
 
-    public interface IStateMachineInputQueue<T>
+    public interface IStateMachineInput<T>
     {
         Task<bool> ReadAsync(CancellationToken cancellationToken);
         IReadOnlyCollection<T> Data { get; }
@@ -155,7 +155,7 @@ namespace StateMachines
                 throw new ArgumentNullException("input");
             }
 
-            return ExecuteAsyncCore(input, 0, cancellationToken);
+            return ExecuteFromEnumerable(input, 0, cancellationToken);
         }
 
         public Task ExecuteAsync(IEnumerable<TActor> input, int batchSize, CancellationToken cancellationToken)
@@ -170,17 +170,17 @@ namespace StateMachines
                 throw new ArgumentOutOfRangeException("blockSize");
             }
 
-            return ExecuteAsyncCore(input, batchSize, cancellationToken);
+            return ExecuteFromEnumerable(input, batchSize, cancellationToken);
         }
 
-        public async Task ExecuteAsync(IStateMachineInputQueue<TActor> inputQueue, CancellationToken cancellationToken)
+        public async Task ExecuteAsync(IStateMachineInput<TActor> inputQueue, CancellationToken cancellationToken)
         {
-            this.CancellationToken = cancellationToken;
-
             if (!await inputQueue.ReadAsync(cancellationToken))
             {
                 return;
             }
+
+            CancellationToken = cancellationToken;
 
             _dispatcher = new ActionBlock<TActor>((Action<TActor>)DispatchActor, new ExecutionDataflowBlockOptions { CancellationToken = cancellationToken });
             _processor = new ActionBlock<StateTransition<TActor, TStatus>>(ProcessTransition, new ExecutionDataflowBlockOptions { CancellationToken = cancellationToken, MaxDegreeOfParallelism = DataflowBlockOptions.Unbounded });
@@ -206,9 +206,9 @@ namespace StateMachines
             }
         }
 
-        private async Task ExecuteAsyncCore(IEnumerable<TActor> input, int batchSize, CancellationToken cancellationToken)
+        private async Task ExecuteFromEnumerable(IEnumerable<TActor> input, int batchSize, CancellationToken cancellationToken)
         {
-            using (var inputQueue = new StateMachineInputQueueImpl<TActor>(input, batchSize))
+            using (var inputQueue = new StateMachineInputImpl<TActor>(input, batchSize))
             {
                 await ExecuteAsync(inputQueue, cancellationToken).ConfigureAwait(false);
             }

@@ -6,9 +6,9 @@ using System.Threading.Tasks;
 
 namespace StateMachines.Internal
 {
-    class StateMachineInputQueueImpl<TActor> : IStateMachineInputQueue<TActor>, IDisposable
+    class StateMachineInputImpl<TActor> : IStateMachineInput<TActor>, IDisposable
     {
-        internal StateMachineInputQueueImpl(IEnumerable<TActor> input, int batchSize)
+        internal StateMachineInputImpl(IEnumerable<TActor> input, int batchSize)
         {
             _batchSize = batchSize;
             _buffer = new List<TActor>(batchSize);
