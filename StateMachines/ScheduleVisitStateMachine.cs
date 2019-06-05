@@ -21,7 +21,7 @@ namespace StateMachines
 
         public override string ToString()
         {
-            return string.Format("RequestId: {0}, Status: {1} ({2})", RequestId, Status, (int)Status);
+            return string.Format("RequestId: {0}, Status: {1}", RequestId, Status);
         }
 
         // TODO: Enrollment-specific data 
@@ -56,68 +56,40 @@ namespace StateMachines
 
         protected override async Task OnStatusChanging(StateMachineStatusChangingArgs<ScheduleVisitActor, ScheduleVisitStatus> e)
         {
-            await ScheduleService.ChangeStatus(e.Actor.RequestId, (int)e.CurrentStatus, (int)e.NewStatus, e.Message).ConfigureAwait(false);
+            await ScheduleService.ChangeStatus(e.Actor.RequestId, e.CurrentStatus.GetId(), e.NewStatus.GetId(), e.Message);
         }
 
         async Task<ScheduleVisitStatus> EnrollConsumer(ScheduleVisitActor source)
         {
-            try
+            if (source.Data == null)
             {
-                CancellationToken.ThrowIfCancellationRequested();
-
-                if (source.Data == null)
-                {
-                    source.Data = await ScheduleService.GetScheduleVisitRequest(source.RequestId);
-                }
-
-                if (source.Status == ScheduleVisitStatus.ConsumerEnrollmentRunning)
-                {
-                    // Retrieve previously started enrollment 
-                }
-
-                // if enrollment has not started, do another one
-                await ChangeStatus(source, ScheduleVisitStatus.ConsumerEnrollmentRunning);
-
-                // TODO: Enroll consumer here
-
-                return ScheduleVisitStatus.ScheduleVisitPending;
+                source.Data = await ScheduleService.GetScheduleVisitRequest(source.RequestId);
             }
 
-            catch (OperationCanceledException)
+            if (source.Status == ScheduleVisitStatus.ConsumerEnrollmentRunning)
             {
-                throw;
+                // Retrieve previously started enrollment 
             }
-            catch (Exception ex) 
-            {
-                throw CreateTransitionError("Consumer enrollment failed.", ScheduleVisitStatus.ConsumerEnrollnmentFailed, ex);
-            }
+
+            // if enrollment has not started, do another one
+            await ChangeStatus(source, ScheduleVisitStatus.ConsumerEnrollmentRunning);
+
+            // TODO: Enroll consumer here
+            return ScheduleVisitStatus.ScheduleVisitPending;
         }
 
         async Task<ScheduleVisitStatus> ScheduleVisitForEnrolledConsumer(ScheduleVisitActor source)
         {
-            try
+            if (source.Data == null)
             {
-                CancellationToken.ThrowIfCancellationRequested();
-
-                if (source.Data == null)
-                {
-                    source.Data = await ScheduleService.GetScheduleVisitRequest(source.RequestId);
-                }
-
-                await ChangeStatus(source, ScheduleVisitStatus.ScheduleVisitRunning);
-
-                // TODO: schedule visit here
-
-                return ScheduleVisitStatus.ScheduleVisitCompleted;
+                source.Data = await ScheduleService.GetScheduleVisitRequest(source.RequestId);
             }
-            catch(OperationCanceledException)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                throw CreateTransitionError("Schedule visit failed.", ScheduleVisitStatus.ScheduleVisitFailed, ex);
-            }
+
+            await ChangeStatus(source, ScheduleVisitStatus.ScheduleVisitRunning);
+            
+            // TODO: schedule visit here
+
+            return ScheduleVisitStatus.ScheduleVisitCompleted;
         }
 
     }

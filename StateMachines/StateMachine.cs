@@ -12,7 +12,7 @@ using System.Threading.Tasks.Dataflow;
 namespace StateMachines
 {
 
-    public class Actor<TStatus> 
+    public class Actor<TStatus>
     {
         public Actor()
         {
@@ -30,23 +30,55 @@ namespace StateMachines
 
     }
 
+
+    public class StateTransitionDescriptor<TActor, TStatus>
+        where TActor: Actor<TStatus>
+    {
+        public StateTransitionDescriptor(Func<TActor, Task<TStatus>> operation, TStatus errorStatus, string name = null)
+        {
+            Operation = operation ?? throw new ArgumentNullException(nameof(operation));
+            ErrorStatus = errorStatus;
+            Name = name ?? operation.Method.Name;
+        }
+
+        public Func<TActor, Task<TStatus>> Operation { get; }
+
+        public string Name { get; }
+
+        public TStatus ErrorStatus { get; }
+
+    }
+
     public class StateTransition<TActor, TStatus>
         where TActor: Actor<TStatus>
     {
-        public StateTransition(TActor source, Func<TActor, Task<TStatus>> operation)
+        public StateTransition(TActor source, StateTransitionDescriptor<TActor, TStatus> descriptor)
         {
-            Source = source;
-            Operation = operation;
+            Source = source ?? throw new ArgumentNullException(nameof(source));
+            Descriptor = descriptor ?? throw new ArgumentNullException(nameof(descriptor));
         }
+
+        private StateTransition()
+        {
+
+        }
+
+        public static StateTransition<TActor, TStatus> NullTransition => new StateTransition<TActor, TStatus>();
 
         public Task<TStatus> ExecuteAsync()
         {
-            return Operation(Source);
+            return Descriptor.Operation(Source);
         }
 
         public TActor Source { get; }
 
-        private Func<TActor, Task<TStatus>> Operation { get; }
+        public StateTransitionDescriptor<TActor, TStatus> Descriptor { get; }
+
+        public TStatus ErrorStatus => Descriptor.ErrorStatus;
+
+        public string Name => Descriptor.Name;
+
+
     }
 
     public class StateMachineException : Exception
@@ -100,10 +132,10 @@ namespace StateMachines
         public string Message { get; set; }
     }
 
-    public interface IStateMachineInputQueue<TActor>
+    public interface IStateMachineInputQueue<T>
     {
         Task<bool> ReadAsync(CancellationToken cancellationToken);
-        IReadOnlyCollection<TActor> Data { get; }
+        IReadOnlyCollection<T> Data { get; }
     }
 
     public abstract class StateMachine<TActor, TStatus>
@@ -181,7 +213,6 @@ namespace StateMachines
                 await ExecuteAsync(inputQueue, cancellationToken).ConfigureAwait(false);
             }
         }
-
 
         private async Task ProcessQueueAsync(IReadOnlyCollection<TActor> items)
         {
@@ -266,7 +297,7 @@ namespace StateMachines
             }
             catch (Exception ex)
             {
-                await SetErrorStatus(transition.Source, DefaultErrorStatus, "Unexpected error occured.", ex);
+                await SetErrorStatus(transition.Source, transition.ErrorStatus, ex.Message, ex);
             }
             finally
             {
@@ -282,12 +313,22 @@ namespace StateMachines
 
         protected StateTransition<TActor, TStatus> CreateTransition(TActor actor, Func<TActor, Task<TStatus>> operation)
         {
-            return new StateTransition<TActor, TStatus>(actor, operation);
+            return new StateTransition<TActor, TStatus>(actor, new StateTransitionDescriptor<TActor, TStatus>(operation, DefaultErrorStatus));
         }
 
+        protected StateTransition<TActor, TStatus> CreateTransition(TActor actor, StateTransitionDescriptor<TActor, TStatus> descriptor) 
+        {
+            return new StateTransition<TActor, TStatus>(actor, descriptor);
+        }
+
+        protected StateTransition<TActor, TStatus> CreateTransition(TActor actor, Func<TActor, Task<TStatus>> operation, TStatus errorStatus)
+        {
+            return new StateTransition<TActor, TStatus>(actor, new StateTransitionDescriptor<TActor, TStatus>(operation, errorStatus));
+        }
+        
         protected StateTransition<TActor, TStatus> Done()
         {
-            return _doneTransition;
+            return StateTransition<TActor, TStatus>.NullTransition;
         }
 
         protected virtual Task OnStatusChanging(StateMachineStatusChangingArgs<TActor, TStatus> e)
@@ -300,24 +341,26 @@ namespace StateMachines
             return new StateTransitionException(message, errorStatus, innerException);
         }
 
-        protected async Task ChangeStatus(TActor actor, TStatus newStatus)
+        protected async Task<TStatus> ChangeStatus(TActor actor, TStatus newStatus, string message = null)
         {
             if (actor.Status.Equals(newStatus))
             {
-                return;
+                return newStatus;
             }
 
             try
             {
-                var e = new StateMachineStatusChangingArgs<TActor, TStatus>(actor, newStatus, null);
+                var e = new StateMachineStatusChangingArgs<TActor, TStatus>(actor, newStatus, message);
                 await OnStatusChanging(e);
                 actor.Status = e.NewStatus;
             }
-
             catch(Exception ex)
             {
-                throw new StateMachineException("Error changing status", ex);
+                Logger.LogError(ex, "{actor}: Status change failed ({statusFrom} -> {statusTo}).", actor, actor.Status, newStatus);
+                throw new StateMachineException("Status change failed.", ex);
             }
+
+            return actor.Status;
         }
 
         private async Task SetErrorStatus(TActor actor, TStatus newStatus, string message, Exception ex)
@@ -325,15 +368,15 @@ namespace StateMachines
             // This method should not throw, see ProcessTranstions for the usage pattern
             try
             {
-                Logger.LogError(ex, "Process error: {message} (Actor : {actor}).", message, actor);
+                Logger.LogError(ex, "{0} - process error: {message}.", actor, message);
                 var e = new StateMachineStatusChangingArgs<TActor, TStatus>(actor, newStatus, message);
                 await OnStatusChanging(e);
                 actor.Status = newStatus;
             }
             catch (Exception exception)
             {
-                Logger.LogError(exception, "Unexpected errror while setting error status.");
-                actor.Status = newStatus; // Assume the error status 
+                Logger.LogError(exception, "{actor} - Unexpected error while setting error status: {message}.");
+                actor.Status = newStatus; // Assume the proposed error status even in case of a failure
             }
 
         }
@@ -345,8 +388,6 @@ namespace StateMachines
         protected TStatus DefaultErrorStatus { get; }
 
 
-        static StateTransition<TActor, TStatus> _doneTransition = new StateTransition<TActor, TStatus>(null, null);
-        
         Countdown _countdown;
         ActionBlock<TActor> _dispatcher;
         ActionBlock<StateTransition<TActor, TStatus>> _processor;

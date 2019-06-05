@@ -8,7 +8,7 @@ namespace StateMachines.UnitTests
     {
         internal static ScheduleVisitActor CreateScheduleVisitActor(QueueItem item)
         {
-            return new ScheduleVisitActor { RequestId = item.Id, Status = (ScheduleVisitStatus)item.StatusId, StatusId = item.StatusId };
+            return new ScheduleVisitActor { RequestId = item.Id, Status = (ScheduleVisitStatus)item.StatusId};
         }
     }
 }

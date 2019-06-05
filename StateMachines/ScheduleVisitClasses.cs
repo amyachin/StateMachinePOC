@@ -5,8 +5,7 @@ using System.Threading.Tasks;
 
 namespace StateMachines
 {
-
-
+  
     public enum ScheduleVisitStatus
     {
         Draft = 0,
@@ -19,6 +18,15 @@ namespace StateMachines
         // Failures
         ConsumerEnrollnmentFailed = 1001,
         ScheduleVisitFailed = 1002
+    }
+
+
+    public static class ScheduleVisitStatusExtensions
+    {
+        public static int GetId(this ScheduleVisitStatus status)
+        {
+            return (int)status;
+        }
     }
 
     // Full information about ScheduleVisit request
